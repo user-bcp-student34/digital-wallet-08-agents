@@ -1,0 +1,254 @@
+openapi: 3.0.3
+info:
+  title: KYC & Wallet Mock (externo)
+  version: "1.0.0"
+  description: >
+    Contrato del mock externo documentado en mock_flujo_registro.md.
+    Simula la verificación KYC y la wallet asociada. No valida documentos
+    reales ni evita altas repetidas. Se consume bajo el prefijo de grupo
+    asignado (p. ej. /groups/8/...).
+servers:
+  - url: https://bcp-wallet-mock.yefri.workers.dev/groups/8
+    description: Mock del workshop (grupo 8), verificado en vivo durante el diseño.
+
+paths:
+  /kyc/verifications:
+    post:
+      operationId: createKycVerification
+      summary: Crea una verificación KYC y su wallet asociada con saldo cero.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KycVerificationRequest'
+      responses:
+        '201':
+          description: Verificación creada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KycVerification'
+        '400':
+          description: Solicitud inválida (documentType/document fuera de los valores permitidos).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: Payload demasiado grande.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Límite de tasa excedido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Proveedor simulado no disponible (KYC_UNAVAILABLE). No se crea wallet.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /kyc/verifications/{id}:
+    get:
+      operationId: getKycVerification
+      summary: Consulta una verificación KYC por su id (distinto de wallet_id).
+      parameters:
+        - $ref: '#/components/parameters/KycIdParam'
+      responses:
+        '200':
+          description: Verificación encontrada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KycVerification'
+        '404':
+          description: Verificación no encontrada en el grupo (NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /kyc/verifications/{id}/decision:
+    post:
+      operationId: decideKycVerification
+      summary: Decide ACTIVE o REJECTED sobre una verificación PENDING.
+      parameters:
+        - $ref: '#/components/parameters/KycIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KycDecisionRequest'
+      responses:
+        '200':
+          description: >
+            Decisión aplicada (o repetida; repetir la misma decisión también devuelve 200).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KycVerification'
+        '400':
+          description: Decisión inválida (INVALID_DECISION).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Verificación no encontrada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Cambiar una decisión final ya tomada (DECISION_CONFLICT).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: Payload demasiado grande.
+        '429':
+          description: Límite de tasa excedido.
+
+  /wallets/{id}:
+    get:
+      operationId: getWallet
+      summary: Consulta estado y saldos de una wallet, en céntimos.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: wallet_id devuelto por /kyc/verifications.
+      responses:
+        '200':
+          description: Wallet encontrada. `available = balance - reserved`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
+        '404':
+          description: Wallet inexistente (NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /support/cases:
+    get:
+      operationId: listSupportCases
+      summary: Lista los casos de soporte abiertos (p. ej. por MANUAL_REVIEW).
+      responses:
+        '200':
+          description: Lista de casos.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SupportCase'
+
+components:
+  parameters:
+    KycIdParam:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Identificador de la verificación KYC (kyc_id), distinto de wallet_id.
+
+  schemas:
+    KycVerificationRequest:
+      type: object
+      required: [documentType, document]
+      properties:
+        documentType:
+          type: string
+          enum: [TEST]
+          description: Solo se admite TEST en esta entrega; no enviar documentos reales.
+        document:
+          type: string
+          pattern: '^TEST-'
+          description: Documento ficticio con prefijo TEST-.
+        scenario:
+          type: string
+          enum: [APPROVED, REJECTED, MANUAL_REVIEW, UNAVAILABLE]
+          default: APPROVED
+          description: Escenario del proveedor simulado. Opcional.
+
+    KycDecisionRequest:
+      type: object
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          enum: [ACTIVE, REJECTED]
+
+    KycVerification:
+      type: object
+      properties:
+        id:
+          type: string
+          description: kyc_id de la verificación.
+        wallet_id:
+          type: string
+        scenario:
+          type: string
+          enum: [APPROVED, REJECTED, MANUAL_REVIEW, UNAVAILABLE]
+        status:
+          type: string
+          enum: [ACTIVE, PENDING, REJECTED]
+
+    Wallet:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [ACTIVE, PENDING, REJECTED]
+        balance:
+          type: integer
+          description: Saldo en céntimos.
+        reserved:
+          type: integer
+          description: Solo los pagos PENDING reservan saldo.
+        available:
+          type: integer
+          description: balance - reserved.
+        currency:
+          type: string
+          example: PEN
+
+    SupportCase:
+      type: object
+      properties:
+        id:
+          type: string
+        resource:
+          type: string
+          description: kyc_id relacionado.
+        reason:
+          type: string
+          example: KYC_REVIEW
+        status:
+          type: string
+          example: OPEN
+
+    ErrorResponse:
+      type: object
+      properties:
+        code:
+          type: string
+          example: KYC_UNAVAILABLE
+        message:
+          type: string
